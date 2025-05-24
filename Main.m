@@ -144,9 +144,49 @@ BarPlotMonthavgModuleWorkingTemp(Module_temps,G_module_raw);
 
 %plan: first calculate average operating module efficiency for each hour of the year using TC Pmax and efficiency from the datasheet, then calculate expected yield per panel, assume external DC/AC efficiency 
 %assume FF = 74% (rough average between STC=75.0% and NOCT=73.3%), assume ideal diode
+
+Am = 1.7;
+STC_Voc = 39.56;
+STC_Isc = 9.46;
+TC_Isc = 0.069/100;
+TC_Voc = -0.312/100;
+n_kb_T = 1.381e-23;
+q = 1.602e-19;
+
+
+%Module operating efficiency
 G_module_mask = G_module_raw;
 G_module_mask(G_module_raw==0)=NaN;
-Module_Voc = 39.56*ones(length(FF),n_modules)+1.381e-23/1.602e-19*Module_temps.*log(G_module_mask/1000)-39.56*0.00312*(Module_temps-25*ones(length(FF),n_modules));
-Module_Isc = 9.46*G_module_mask/1000+9.46*0.0006*(Module_temps-25*ones(length(FF),n_modules));
+Module_Voc = STC_Voc*ones(length(FF),n_modules)+n_kb_T/q*Module_temps.*log(G_module_mask/1000)+STC_Voc*TC_Voc*(Module_temps-25*ones(length(FF),n_modules));
+Module_Isc = STC_Isc*G_module_mask/1000 +STC_Isc*TC_Isc*(Module_temps-25*ones(length(FF),n_modules));
 Module_Pmpp= 0.74*Module_Voc.*Module_Isc;
-Module_eff = Module_Pmpp./G_module_mask/1.7;
+Module_eff = Module_Pmpp./G_module_mask/Am;
+
+valid_hours = ~isnan(Module_eff) & G_module_raw > 0 & Module_eff > 0; 
+avg_operating_efficiency = mean(Module_eff(valid_hours));
+
+annual_irradiation = mean(sum(G_module_raw)*1e-3);
+annual_energy_dc = mean(annual_irradiation * avg_operating_efficiency * Am);
+annual_demand = sum(monthly_demand);
+
+losses_approx = 0.15;       %Selfmade approximation of system losses
+avg_effective_efficiency = avg_operating_efficiency*(1-losses_approx);
+annual_yield = annual_irradiation*avg_effective_efficiency;
+target_X = [10, 20, 40, 60, 80, 100];
+
+installed_PV_P = zeros(size(target_X));
+Num_Mod = zeros(size(target_X));
+target_energy_X = zeros(size(target_X));
+
+for i = 1:length(target_X)
+    target_energy_X(i) = annual_demand * (target_X(i)/100);
+    installed_PV_P(i) = target_energy_X(i) / annual_yield;
+    Num_Mod(i) = ceil(installed_PV_P(i) / Module_P);
+end
+
+fprintf('Target%%  Energy(kWh)  Power(kWp)  Modules\n');
+fprintf('-------  -----------  ----------  -------\n');
+for i = 1:length(target_X)
+    fprintf('%6d%%  %10.1f  %9.2f  %7d\n', ...
+            target_X(i), target_energy_X(i), installed_PV_P(i), Num_Mod(i));
+end
